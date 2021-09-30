@@ -1,0 +1,217 @@
+---
+title: "P6_Muller_Gauthier"
+author: "muller gauthier"
+path : setwd("C:/Users/gauth/Google Drive/DataAnalyst/P5_Muller_Gauthier")
+date: "07/07/2021"
+output:
+  html_document:
+    toc: yes
+    toc_float: yes
+    number_sections: yes
+  html_notebook:
+    toc: yes
+    toc_float: yes
+    number_sections: yes
+  pdf_document:
+    toc: yes
+editor_options:
+  chunk_output_type: inline
+---
+
+# Préparation
+
+## Imports des librairies
+
+```{r message=FALSE, warning=FALSE}
+library("FactoMineR")
+library("factoextra")
+library("Factoshiny")
+library(tidyverse)
+library(readr)
+library(tidyr)
+library(dplyr)
+library(readr)
+library(psych)
+library(ggplot2)
+library(caret)
+library(GGally)
+```
+
+## Set du chemin
+
+```{r}
+setwd("C:/Users/gauth/Google Drive/DataAnalyst/P6_Muller_Gauthier")
+```
+
+## Imports des données
+
+```{r}
+data<- read.table("C:/Users/gauth/Google Drive/DataAnalyst/P6_Muller_Gauthier/data/notes.csv",header = TRUE, sep = ",", check.names = FALSE, encoding = "UTF-8",stringsAsFactors=T)
+```
+
+# Mission 0: Description des données
+
+```{r}
+str(data)
+```
+
+```{r}
+pairs.panels(data[,-1], 
+             method = "pearson", # correlation method
+             hist.col = "#00AFBB",
+             density = TRUE,  # show density plots
+             ellipses = TRUE # show correlation ellipses
+             )
+```
+
+```{r}
+## Groupe sur Vrai ou Faux
+data_vrai<-data %>% filter(is_genuine == "True")
+data_faux<-data %>% filter(is_genuine == "False")
+```
+
+```{r}
+pairs.panels(data_vrai[,-1], 
+             method = "pearson", # correlation method
+             hist.col = "#00AFBB",
+             density = TRUE,  # show density plots
+             ellipses = TRUE # show correlation ellipses
+             )
+```
+
+```{r}
+pairs.panels(data_faux[,-1], 
+             method = "pearson", # correlation method
+             hist.col = "#00AFBB",
+             density = TRUE,  # show density plots
+             ellipses = TRUE # show correlation ellipses
+             )
+```
+
+```{r message=FALSE, warning=FALSE}
+ggpairs(data, aes(colour = is_genuine),upper = list(continuous = wrap("cor", size = 3),cardinality_threshold=20))
+```
+
+# Mission 1: ACP
+
+```{r}
+## Utilisation de l'interface graphique Factoshiny
+# res<-Factoshiny(data)
+```
+
+```{r}
+## ACP meme unité == non centré reduit  
+res.PCA<-PCA(data,quali.sup=c(1),scale.unit=FALSE,graph=FALSE)
+plot.PCA(res.PCA,choix='var',title="Graphe des variables de l'ACP")
+plot.PCA(res.PCA,invisible=c('ind.sup'),title="Graphe des individus de l'ACP",label =c('ind','quali'))
+res.HCPC<-HCPC(res.PCA,nb.clust=2,consol=FALSE,graph=FALSE)
+plot.HCPC(res.HCPC,choice='tree',title='Arbre hiérarchique')
+plot.HCPC(res.HCPC,choice='map',draw.tree=FALSE,title='Plan factoriel')
+plot.HCPC(res.HCPC,choice='3D.map',ind.names=FALSE,centers.plot=FALSE,angle=60,title='Arbre hiérarchique sur le plan factoriel')
+```
+
+# Mission 2 : Classification
+
+```{r}
+## kmeans avec toutes les variables
+km.out = kmeans(data[,-1],centers=2,nstart =30) 
+fviz_cluster(km.out, data[,-1], ellipse.type = "norm",main = "Kmeans avec toutes les variables") 
+##  Kmeans avec variable significatives
+km.out = kmeans(data[,5:7],centers=2,nstart =30) 
+fviz_cluster(km.out, data[,5:7], ellipse.type = "norm",main = "Kmeans avec variables significatives") 
+```
+
+# Mission 3 : Regression logistique
+
+## Partionning
+
+```{r}
+myMatrix <- createDataPartition(data$is_genuine, p = 0.85, list = FALSE)
+```
+
+```{r}
+## data train 145 données
+frTrain <- data[myMatrix, ];dim(frTrain)
+## data test 25 données
+frTest <- data[- myMatrix, ];dim(frTest)
+```
+
+```{r}
+## Verification des conditions d'applications  / >30 individus 
+table(frTrain$is_genuine)
+```
+
+## Modele
+
+```{r message=FALSE, warning=FALSE}
+## Step1
+model <- train(is_genuine ~  margin_low + length +diagonal+ margin_up+ height_left +height_right, data = frTrain, method = "glm")
+summary(model) 
+```
+
+```{r message=FALSE, warning=FALSE}
+## Step2
+model <- train(is_genuine ~  margin_low + length +diagonal, data = frTrain, method = "glm")
+summary(model) 
+```
+
+```{r message=FALSE, warning=FALSE}
+##Step3
+model <- train(is_genuine ~ margin_low + length, data = frTrain, method = "glm")
+summary(model) 
+```
+
+## Algo
+
+```{r}
+## Prédiction sur data test
+pred_glm_test <- predict(model, newdata = frTest)
+table(pred_glm_test)
+```
+
+```{r}
+## Prédiction sur data total
+pred_glm_total <- predict(model, newdata = data)
+table(pred_glm_total)
+```
+
+## Validation de la regression data test
+
+```{r}
+## Matrice de confusion
+matrixConf<- confusionMatrix(data = pred_glm_test,reference = frTest$is_genuine,positive="False")
+matrixConf
+fourfoldplot(matrixConf$table,color = c("#CC6666", "#99CC99"),
+             conf.level = 0, margin = 1, main = "Confusion Matrix TEST")
+```
+
+```{r}
+##  Courbe ROC
+score_glm <- predict(model, newdata = frTest,
+                     type="prob")
+roc_obj <- pROC::roc(frTest$is_genuine=="False",score_glm[,"False"])
+plot(1-roc_obj$specificities,roc_obj$sensitivities,type="l") 
+abline(0,1)
+roc_obj$auc
+```
+
+## Validation de la regression data total
+
+```{r}
+## Matrice de confusion
+matrixConf<- confusionMatrix(data = pred_glm_total,reference = data$is_genuine,positive="False")
+matrixConf
+fourfoldplot(matrixConf$table,color = c("#CC6666", "#99CC99"),
+             conf.level = 0, margin = 1, main = "Confusion Matrix Total")
+```
+
+```{r}
+##  Courbe ROC
+score_glm <- predict(model, newdata = data,
+                     type="prob")
+roc_obj <- pROC::roc(data$is_genuine=="False",score_glm[,"False"])
+plot(1-roc_obj$specificities,roc_obj$sensitivities,type="l") 
+abline(0,1)
+roc_obj$auc
+
+```
